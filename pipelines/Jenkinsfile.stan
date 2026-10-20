@@ -7,7 +7,7 @@ pipeline {
     }
 
     environment {
-        EC2_IP = '13.60.88.234'
+        EC2_IP = '13.60.241.251'
     }
 
     options {
