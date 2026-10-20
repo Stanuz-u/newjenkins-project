@@ -4,7 +4,6 @@ pipeline {
 
     tools {
         nodejs 'nodeproject'
-        dockerTool 'docker-project'
     }
 
     environment {
@@ -27,31 +26,29 @@ pipeline {
         stage('Build') {
             steps {
                 script {
-                    env.IMAGE = "classroom-app:${env.BUILD_NUMBER}-${sh(
+                    def commitId = sh(
                         script: 'git rev-parse --short=12 HEAD',
                         returnStdout: true
-                    ).trim()}"
+                    ).trim()
+
+                    env.IMAGE = "classroom-app:${env.BUILD_NUMBER}-${commitId}"
                 }
 
                 sh 'docker build -t "$IMAGE" .'
             }
         }
 
-        stage('Deploy') {
+        stage('Deploy to EC2') {
             steps {
-                script {
-                    echo "Deploying Docker image to EC2"
-                }
+                echo 'Deploying application to EC2...'
 
                 sshagent(credentials: ['ec2']) {
                     sh '''
-                        scp -o StrictHostKeyChecking=yes \
-                            scripts/deploy.sh \
-                            ubuntu@${EC2_IP}:/home/ubuntu/deploy.sh
+                        scp scripts/deploy.sh \
+                            "ubuntu@$EC2_IP:/home/ubuntu/deploy.sh"
 
-                        ssh -o StrictHostKeyChecking=yes \
-                            ubuntu@${EC2_IP} \
-                            "chmod +x /home/ubuntu/deploy.sh && /home/ubuntu/deploy.sh '${IMAGE}'"
+                        ssh "ubuntu@$EC2_IP" \
+                            "chmod +x /home/ubuntu/deploy.sh && bash /home/ubuntu/deploy.sh '$IMAGE'"
                     '''
                 }
             }
@@ -59,9 +56,12 @@ pipeline {
     }
 
     post {
-        always {
-            junit testResults: 'reports/tests.xml',
-                  allowEmptyResults: true
+        success {
+            echo 'Pipeline completed successfully!'
+        }
+
+        failure {
+            echo 'Pipeline failed. Check the console output.'
         }
     }
 }
