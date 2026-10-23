@@ -1,5 +1,8 @@
 pipeline {
     agent any
+    tools {
+    nodejs 'nodeproject'
+}
     options {
         timestamps()
         disableConcurrentBuilds()
