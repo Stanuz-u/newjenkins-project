@@ -1,5 +1,5 @@
 pipeline {
-    agent { label 'linux-docker' }
+    agent any
     options {
         timestamps()
         disableConcurrentBuilds()
