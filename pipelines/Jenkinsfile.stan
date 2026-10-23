@@ -29,7 +29,6 @@ pipeline {
         stage('Test') {
             steps {
                 sh 'mkdir -p reports'
-                sh 'npm ci'
                 sh 'npm run test:ci -- --forceExit' 
             }
         }
