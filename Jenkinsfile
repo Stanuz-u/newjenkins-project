@@ -8,7 +8,7 @@ pipeline {
     }
     parameters {
         string(name: 'STAGING_HOST', defaultValue: '16.170.205.99', description: 'Staging EC2 DNS name or IPv4 address')
-        string(name: 'PRODUCTION_HOST', defaultValue: '', description: 'Production EC2 DNS name or IPv4 address')
+        string(name: 'PRODUCTION_HOST', defaultValue: '16.171.161.103', description: 'Production EC2 DNS name or IPv4 address')
         booleanParam(name: 'DEPLOY_PRODUCTION', defaultValue: false, description: 'Request approval after staging succeeds')
     }
     stages {
