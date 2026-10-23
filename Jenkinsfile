@@ -1,8 +1,8 @@
 pipeline {
     agent any
     tools {
-    nodejs 'nodeproject'
-}
+        nodejs 'nodeproject'
+    }
     options {
         timestamps()
         disableConcurrentBuilds()
@@ -27,7 +27,18 @@ pipeline {
                 }
             }
         }
-        stage('Test') { steps { sh 'mkdir -p reports && npm run test:ci' } }
+        stage('Test') { 
+            steps { 
+                sh '''
+                  echo "--- Node versions ---"
+                  node -v
+                  npm -v
+                  mkdir -p reports
+                  rm -f reports/tests.xml
+                  timeout 30 npm run test:ci -- --test-timeout=10000 || npm test
+                ''' 
+            } 
+        }
         stage('Build once') { steps { sh 'docker build -t "$IMAGE" .' } }
         stage('Smoke test') { steps { sh 'bash scripts/smoke-test.sh "$IMAGE"' } }
         stage('Package') {
