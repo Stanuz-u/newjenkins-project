@@ -1,3 +1,4 @@
+
 pipeline {
     agent any
 
@@ -6,17 +7,31 @@ pipeline {
     }
 
     parameters {
-        string(name: 'STAGING_IP', defaultValue: '16.170.205.99', description: 'Staging EC2 instance IPv4 address')
-        string(name: 'PRODUCTION_IP', defaultValue: '16.171.161.103', description: 'Production EC2 instance IPv4 address')
-        booleanParam(name: 'DEPLOY_PRODUCTION', defaultValue: false, description: 'Check this box to promote the build to the production server after staging succeeds')
+        string(
+            name: 'STAGING_IP',
+            defaultValue: '16.170.205.99',
+            description: 'Staging EC2 instance IPv4 address'
+        )
+
+        string(
+            name: 'PRODUCTION_IP',
+            defaultValue: '16.171.161.103',
+            description: 'Production EC2 instance IPv4 address'
+        )
+
+        booleanParam(
+            name: 'DEPLOY_PRODUCTION',
+            defaultValue: false,
+            description: 'Deploy to production after staging succeeds'
+        )
     }
 
     environment {
-        // Replace with your actual Docker Hub username/org
-        DOCKER_REGISTRY  = 'stanuz' 
-        DOCKER_REPO      = 'classroom-app'
-        
-        SSH_OPTS         = '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes'
+        DOCKER_REGISTRY = 'stanuz'
+        DOCKER_REPO = 'classroom-app'
+
+        // Temporary approach: configure trusted host keys for production use.
+        SSH_OPTS = '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes'
     }
 
     options {
@@ -26,32 +41,52 @@ pipeline {
     }
 
     stages {
+
         stage('Test') {
-            steps {stage('Test') { steps { sh 'mkdir -p reports && npm run test:ci' } }
+            steps {
+                sh 'mkdir -p reports && npm run test:ci'
             }
         }
 
         stage('Build & Tag') {
             steps {
                 script {
-                    def commitId = sh(script: 'git rev-parse --short=12 HEAD', returnStdout: true).trim()
-                    // Constructs a globally distinct Docker Hub registry path
-                    env.IMAGE_TAG = "${env.BUILD_NUMBER}-${commitId}"
-                    env.FULL_IMAGE_NAME = "${env.DOCKER_REGISTRY}/${env.DOCKER_REPO}:${env.IMAGE_TAG}"
+                    def commitId = sh(
+                        script: 'git rev-parse --short=12 HEAD',
+                        returnStdout: true
+                    ).trim()
+
+                    env.IMAGE_TAG =
+                        "${env.BUILD_NUMBER}-${commitId}"
+
+                    env.FULL_IMAGE_NAME =
+                        "${env.DOCKER_REGISTRY}/${env.DOCKER_REPO}:${env.IMAGE_TAG}"
                 }
+
                 sh 'docker build -t "$FULL_IMAGE_NAME" .'
             }
         }
 
         stage('Push to Docker Hub') {
             steps {
-                echo "📦 Uploading image to Docker Hub..."
-                // 'docker-hub-credentials-id' must match your stored Jenkins Username/Password credential ID
-                withCredentials([usernamePassword(credentialsId: 'docker-login', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                    sh """
-                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                echo 'Uploading image to Docker Hub...'
+
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'docker-login',
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASS'
+                    )
+                ]) {
+                    sh '''
+                        set -eu
+                        echo "$DOCKER_PASS" |
+                            docker login -u "$DOCKER_USER" --password-stdin
+
                         docker push "$FULL_IMAGE_NAME"
-                    """
+
+                        docker logout
+                    '''
                 }
             }
         }
@@ -59,13 +94,23 @@ pipeline {
         stage('Deploy to Staging') {
             steps {
                 script {
-                    if (!params.STAGING_IP) { error 'Staging IP parameter cannot be empty.' }
+                    if (!params.STAGING_IP?.trim()) {
+                        error 'Staging IP cannot be empty.'
+                    }
                 }
-                echo "🚀 Deploying $FULL_IMAGE_NAME to Staging EC2 (${params.STAGING_IP})..."
+
+                echo "Deploying ${env.FULL_IMAGE_NAME} to staging..."
+
                 sshagent(credentials: ['ec2']) {
                     sh """
-                        scp ${env.SSH_OPTS} scripts/deploy.sh ubuntu@${params.STAGING_IP}:/home/ubuntu/deploy.sh
-                        ssh ${env.SSH_OPTS} ubuntu@${params.STAGING_IP} \
+                        set -eu
+
+                        scp ${env.SSH_OPTS} \
+                            scripts/deploy.sh \
+                            ubuntu@${params.STAGING_IP}:/home/ubuntu/deploy.sh
+
+                        ssh ${env.SSH_OPTS} \
+                            ubuntu@${params.STAGING_IP} \
                             "chmod +x /home/ubuntu/deploy.sh && bash /home/ubuntu/deploy.sh '${env.FULL_IMAGE_NAME}'"
                     """
                 }
@@ -73,29 +118,48 @@ pipeline {
         }
 
         stage('Approve Production') {
-            when { expression { params.DEPLOY_PRODUCTION } }
+            when {
+                expression { params.DEPLOY_PRODUCTION }
+            }
+
             steps {
-                echo "⏸️ Staging deployment successful. Pausing for production release approval..."
                 timeout(time: 15, unit: 'MINUTES') {
-                    // Pauses execution until a team member manually confirms the promotion
-                    input message: "Promote image tag [ ${env.IMAGE_TAG} ] to live Production?", ok: "Release to Production"
+                    input(
+                        message: "Staging succeeded. Promote ${env.FULL_IMAGE_NAME} to production?",
+                        ok: 'Release to Production'
+                    )
                 }
             }
         }
 
         stage('Deploy to Production') {
-            when { expression { params.DEPLOY_PRODUCTION } }
+            when {
+                expression { params.DEPLOY_PRODUCTION }
+            }
+
             steps {
                 script {
-                    if (!params.PRODUCTION_IP || params.PRODUCTION_IP == params.STAGING_IP) { 
-                        error 'A valid, distinct Production IP address must be supplied.' 
+                    if (!params.PRODUCTION_IP?.trim()) {
+                        error 'Production IP cannot be empty.'
+                    }
+
+                    if (params.PRODUCTION_IP == params.STAGING_IP) {
+                        error 'Production and staging must use different IP addresses.'
                     }
                 }
-                echo "🔥 Deploying verified image $FULL_IMAGE_NAME to Production EC2 (${params.PRODUCTION_IP})..."
+
+                echo "Deploying ${env.FULL_IMAGE_NAME} to production..."
+
                 sshagent(credentials: ['ec2']) {
                     sh """
-                        scp ${env.SSH_OPTS} scripts/deploy.sh ubuntu@${params.PRODUCTION_IP}:/home/ubuntu/deploy.sh
-                        ssh ${env.SSH_OPTS} ubuntu@${params.PRODUCTION_IP} \
+                        set -eu
+
+                        scp ${env.SSH_OPTS} \
+                            scripts/deploy.sh \
+                            ubuntu@${params.PRODUCTION_IP}:/home/ubuntu/deploy.sh
+
+                        ssh ${env.SSH_OPTS} \
+                            ubuntu@${params.PRODUCTION_IP} \
                             "chmod +x /home/ubuntu/deploy.sh && bash /home/ubuntu/deploy.sh '${env.FULL_IMAGE_NAME}'"
                     """
                 }
@@ -105,10 +169,15 @@ pipeline {
 
     post {
         success {
-            echo '✅ Pipeline completed successfully across targeted environments!'
+            echo 'Pipeline completed successfully!'
         }
+
         failure {
-            echo '❌ Pipeline failed. Check console log streams for error context.'
+            echo 'Pipeline failed. Check the Console Output.'
+        }
+
+        always {
+            echo 'Pipeline execution finished.'
         }
     }
 }
