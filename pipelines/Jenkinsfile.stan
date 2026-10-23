@@ -27,9 +27,7 @@ pipeline {
 
     stages {
         stage('Test') {
-            steps {
-                sh 'mkdir -p reports'
-                sh 'npm run test:ci
+            steps {stage('Test') { steps { sh 'mkdir -p reports && npm run test:ci' } }
             }
         }
 
